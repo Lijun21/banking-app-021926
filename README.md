@@ -8,41 +8,67 @@ Code up a banking app that
 
 The rest is up to you. You can go as deep as you want
 
+## quickstart
 
-## money precision
-use integers(fixed point arithmetic) for money, Never floats. 
-- rounding errors
-- inconsistent comparision(balance == 100.00 may fail)
-- regulartory and audit failures 
+### prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose)
+- Python 3.11+
 
-store amounts in the smallest currency unit(cents, pence, paisa, etc)
-- insead of balance = 12.50 # dollars
-- balance = 1250 # cents
-- 1250 + 50 = 1300 # $13.00, perfect accurate
-- integers are exat in binary, no precision loss
+---
 
-use string type to hold exact decimal representations for input parsing or diplaying formatted output("$12.50"), but never for calculation or storage 
+### 1. clone the repo
+```bash
+git clone <your-repo-url>
+cd banking-app-021926
+```
 
-in databases, use NUMERIC(19,4) or DECIMAL(19,4) - never FLOAT or DOUBLE 
+### 2. create and activate a virtual environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate      # macOS / Linux
+# .venv\Scripts\activate       # Windows
+```
 
-## docker compose
-architecture design 
-python(Java, go, Node)
-PostgreSQL + FastAPI services, 
-Numeric(28,8)
-SQLite for tests
+### 3. install dependencies
+```bash
+pip install -r requirements.txt
+```
 
-## one user should not able to change other user's money
+### 4. start the app
+```bash
+docker compose up --build
+```
 
+This starts:
+- **PostgreSQL** on port `5432` (production DB)
+- **FastAPI** on port `8000`
 
-## precent two concurrent transfers on same wallet
-use SELECT FOR UPDATE
-Add a row-level database lock when fetching the wallets, so the second thread blocks until the first commits
+API: http://localhost:8000  
+Interactive docs: http://localhost:8000/docs
 
-With sorting by IDs — both threads lock in the same order
-Say wallet_alice_id = "aaa" and wallet_bob_id = "bbb". Sorted alphabetically: ["aaa", "bbb"] — alice always first.
+---
 
-## one user submit multi times, should be counted as once 
+### 5. running tests
 
+Tests run against a dedicated PostgreSQL test database on port `5433`, completely separate from the production DB.
 
-## get transactions with pagination or better way for it?
+**Start the test database**
+```bash
+docker compose up db_test -d
+```
+
+**Run all tests**
+```bash
+.venv/bin/pytest tests/ -v
+```
+
+**Run a specific file**
+```bash
+.venv/bin/pytest tests/test_endpoints.py -v
+.venv/bin/pytest tests/test_transfer.py -v
+```
+
+**Override the test DB URL** (optional)
+```bash
+TEST_DATABASE_URL=postgresql://user:pass@host:5432/mydb pytest tests/ -v
+```

@@ -1,11 +1,5 @@
 from datetime import datetime
-from decimal import Decimal
-from pydantic import BaseModel, EmailStr
-
-
-class UserCreate(BaseModel):
-    username: str
-    email: EmailStr
+from pydantic import BaseModel
 
 
 class UserResponse(BaseModel):
@@ -15,3 +9,8 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    # from client to FastAPI
+    # (Router to Pydantic schema veification, 
+    # User(id="abc", username="alice", ...) → {"id": "abc", "username": "alice", ...}
+    # now FastAPI serizlize a User ORM object into UserResponse

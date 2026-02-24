@@ -14,13 +14,14 @@ def transfer(
     from_wallet_id: str,
     to_wallet_id: str,
     amount: Decimal,
+    requester_id: str,
     note: str | None = None,
 ) -> Transaction:
     """
     Transfer `amount` (in the source wallet's currency) from one wallet to another.
     - Same currency: direct debit/credit.
     - Different currencies: convert via hard-coded exchange rates.
-    Raises HTTP 400/404 on invalid inputs.
+    Raises HTTP 400/403/404 on invalid inputs.
     """
     if from_wallet_id == to_wallet_id:
         raise HTTPException(
@@ -49,6 +50,13 @@ def transfer(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source wallet not found.")
     if to_wallet is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Destination wallet not found.")
+
+    # Ownership check: only the source wallet's owner may initiate the transfer
+    if from_wallet.owner_id != requester_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: you do not own the source wallet.",
+        )
 
     if from_wallet.balance < amount:
         raise HTTPException(

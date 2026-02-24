@@ -1,8 +1,12 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.auth import get_current_user
 from app.database import get_db
 from app.models.transaction import Transaction
+from app.models.user import User
 from app.schemas.transaction import TransferRequest, TransactionResponse
 from app.services.transfer_service import transfer
 
@@ -10,12 +14,17 @@ router = APIRouter(tags=["Transactions"])
 
 
 @router.post("/transfers", response_model=TransactionResponse, status_code=201)
-def make_transfer(payload: TransferRequest, db: Session = Depends(get_db)):
+def make_transfer(
+    payload: TransferRequest,
+    db: Session = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+):
     return transfer(
         db=db,
         from_wallet_id=payload.from_wallet_id,
         to_wallet_id=payload.to_wallet_id,
         amount=payload.amount,
+        requester_id=current_user.id,
         note=payload.note,
     )
 
@@ -25,6 +34,7 @@ def get_wallet_transactions(
     wallet_id: str,
     limit: int = Query(default=50, le=200),
     db: Session = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)] = None,
 ):
     """Return all transactions where the wallet was sender or receiver."""
     txns = (

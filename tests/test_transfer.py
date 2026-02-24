@@ -44,9 +44,10 @@ class TestCurrencyConversion:
 # transfer_service tests (using mocked DB session)
 # ---------------------------------------------------------------------------
 
-def _make_wallet(wallet_id: str, currency: Currency, balance: Decimal) -> Wallet:
+def _make_wallet(wallet_id: str, owner_id: str, currency: Currency, balance: Decimal) -> Wallet:
     w = MagicMock(spec=Wallet)
     w.id = wallet_id
+    w.owner_id = owner_id
     w.currency = currency
     w.balance = balance
     return w
@@ -54,61 +55,82 @@ def _make_wallet(wallet_id: str, currency: Currency, balance: Decimal) -> Wallet
 
 class TestTransferService:
     def _db(self, from_wallet, to_wallet):
+        """Build a mock DB that returns the two wallets from the SELECT FOR UPDATE query chain."""
         db = MagicMock()
-        db.get.side_effect = lambda model, wid: (
-            from_wallet if wid == from_wallet.id else to_wallet
-        )
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_for_update = MagicMock()
+        db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.with_for_update.return_value = mock_for_update
+        # Return wallets sorted by ID, matching the service's deadlock-prevention order
+        mock_for_update.all.return_value = sorted([from_wallet, to_wallet], key=lambda w: w.id)
         return db
 
     def test_same_wallet_raises_400(self):
         db = MagicMock()
         with pytest.raises(HTTPException) as exc_info:
-            transfer(db, "w1", "w1", Decimal("10"))
+            transfer(db, "w1", "w1", Decimal("10"), requester_id="user1")
         assert exc_info.value.status_code == 400
 
     def test_source_wallet_not_found_raises_404(self):
         db = MagicMock()
-        db.get.return_value = None
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_for_update = MagicMock()
+        db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.with_for_update.return_value = mock_for_update
+        mock_for_update.all.return_value = []  # no wallets found
         with pytest.raises(HTTPException) as exc_info:
-            transfer(db, "nonexistent", "w2", Decimal("10"))
+            transfer(db, "nonexistent", "w2", Decimal("10"), requester_id="user1")
         assert exc_info.value.status_code == 404
 
     def test_insufficient_funds_raises_400(self):
-        from_w = _make_wallet("w1", Currency.USD, Decimal("5"))
-        to_w = _make_wallet("w2", Currency.USD, Decimal("0"))
+        from_w = _make_wallet("w1", "user1", Currency.USD, Decimal("5"))
+        to_w = _make_wallet("w2", "user2", Currency.USD, Decimal("0"))
         db = self._db(from_w, to_w)
         with pytest.raises(HTTPException) as exc_info:
-            transfer(db, "w1", "w2", Decimal("10"))
+            transfer(db, "w1", "w2", Decimal("10"), requester_id="user1")
         assert exc_info.value.status_code == 400
 
+    def test_ownership_check_raises_403(self):
+        """A user cannot transfer from a wallet they don't own."""
+        from_w = _make_wallet("w1", "alice", Currency.USD, Decimal("100"))
+        to_w = _make_wallet("w2", "bob", Currency.USD, Decimal("0"))
+        db = self._db(from_w, to_w)
+        with pytest.raises(HTTPException) as exc_info:
+            transfer(db, "w1", "w2", Decimal("50"), requester_id="bob")  # bob tries to spend alice's money
+        assert exc_info.value.status_code == 403
+
     def test_same_currency_transfer_debits_and_credits(self):
-        from_w = _make_wallet("w1", Currency.USD, Decimal("100"))
-        to_w = _make_wallet("w2", Currency.USD, Decimal("50"))
+        from_w = _make_wallet("w1", "user1", Currency.USD, Decimal("100"))
+        to_w = _make_wallet("w2", "user2", Currency.USD, Decimal("50"))
         db = self._db(from_w, to_w)
 
-        transfer(db, "w1", "w2", Decimal("30"))
+        transfer(db, "w1", "w2", Decimal("30"), requester_id="user1")
 
         assert from_w.balance == Decimal("70")
         assert to_w.balance == Decimal("80")
         db.commit.assert_called_once()
 
     def test_cross_currency_transfer_converts_amount(self):
-        from_w = _make_wallet("w1", Currency.USD, Decimal("1000"))
-        to_w = _make_wallet("w2", Currency.EUR, Decimal("0"))
+        from_w = _make_wallet("w1", "user1", Currency.USD, Decimal("1000"))
+        to_w = _make_wallet("w2", "user2", Currency.EUR, Decimal("0"))
         db = self._db(from_w, to_w)
 
-        transfer(db, "w1", "w2", Decimal("108"))
+        transfer(db, "w1", "w2", Decimal("108"), requester_id="user1")
 
         assert from_w.balance == Decimal("892")
         # 108 USD → 100 EUR (rate 1.08)
         assert to_w.balance == Decimal("100.00000000")
 
     def test_transaction_record_is_saved(self):
-        from_w = _make_wallet("w1", Currency.USD, Decimal("100"))
-        to_w = _make_wallet("w2", Currency.USD, Decimal("0"))
+        from_w = _make_wallet("w1", "user1", Currency.USD, Decimal("100"))
+        to_w = _make_wallet("w2", "user2", Currency.USD, Decimal("0"))
         db = self._db(from_w, to_w)
 
-        transfer(db, "w1", "w2", Decimal("50"), note="rent")
+        transfer(db, "w1", "w2", Decimal("50"), requester_id="user1", note="rent")
 
         db.add.assert_called_once()
         added_txn = db.add.call_args[0][0]
@@ -122,8 +144,8 @@ class TestTransferService:
         PostgreSQL acquires a row-level lock during transfers.
         (SQLite silently ignores FOR UPDATE, but we at least assert intent.)
         """
-        from_w = _make_wallet("w1", Currency.USD, Decimal("100"))
-        to_w = _make_wallet("w2", Currency.USD, Decimal("0"))
+        from_w = _make_wallet("w1", "user1", Currency.USD, Decimal("100"))
+        to_w = _make_wallet("w2", "user2", Currency.USD, Decimal("0"))
 
         # Build a mock query chain: db.query().filter().with_for_update().all()
         mock_query = MagicMock()
@@ -136,6 +158,6 @@ class TestTransferService:
         db = MagicMock()
         db.query.return_value = mock_query
 
-        transfer(db, "w1", "w2", Decimal("50"))
+        transfer(db, "w1", "w2", Decimal("50"), requester_id="user1")
 
         mock_filter.with_for_update.assert_called_once()  # lock was requested ✅
