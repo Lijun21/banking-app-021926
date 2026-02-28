@@ -40,8 +40,10 @@ def login(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Session = Depends(get_db),
 ):
-    """Return a JWT bearer token for valid credentials."""
-    user = db.query(User).filter(User.username == form.username).first()
+    """Return a JWT bearer token for valid credentials (username or email)."""
+    user = db.query(User).filter(
+        (User.username == form.username) | (User.email == form.username)
+    ).first()
     if user is None or not user.hashed_password or not verify_password(form.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
