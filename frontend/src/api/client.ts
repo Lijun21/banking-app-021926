@@ -44,8 +44,12 @@ async function request<T>(
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  post: <T>(path: string, body?: unknown, extraHeaders?: Record<string, string>) =>
+    request<T>(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: extraHeaders,
+    }),
   postForm: <T>(path: string, data: URLSearchParams) =>
     request<T>(path, {
       method: "POST",

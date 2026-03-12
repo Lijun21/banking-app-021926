@@ -35,6 +35,8 @@ export default function TransferPage() {
   // Quote state
   const [quote, setQuote] = useState<Quote | null>(null);
   const [countdown, setCountdown] = useState(60);
+  // Idempotency key — generated once per quote, reused on retries
+  const [idempotencyKey, setIdempotencyKey] = useState("");
 
   // Result state
   const [result, setResult] = useState<TransactionResponse | null>(null);
@@ -93,6 +95,7 @@ export default function TransferPage() {
       setToWallet(matched);
       const q = getQuote(numAmount, fromWallet.currency, toCurrency);
       setQuote(q);
+      setIdempotencyKey(crypto.randomUUID()); // fresh key per quote
       setStep("quote");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
@@ -110,7 +113,7 @@ export default function TransferPage() {
     setConfirmLoading(true);
     setTransferError("");
     try {
-      const txn = await transfer(fromWalletId, toWallet.id, amount, note || undefined);
+      const txn = await transfer(fromWalletId, toWallet.id, amount, note || undefined, idempotencyKey);
       setResult(txn);
       setStep("result");
       // Refresh wallet balances so "Send Another" shows updated amounts
@@ -124,7 +127,7 @@ export default function TransferPage() {
     } finally {
       setConfirmLoading(false);
     }
-  }, [fromWalletId, toWallet, amount, note, fromWallet, user]);
+  }, [fromWalletId, toWallet, amount, note, fromWallet, user, idempotencyKey]);
 
   if (!user) return null;
 

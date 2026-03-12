@@ -16,14 +16,17 @@ export function transfer(
   fromWalletId: string,
   toWalletId: string,
   amount: string,
-  note?: string
+  note?: string,
+  idempotencyKey?: string
 ): Promise<TransactionResponse> {
-  return api.post("/transfers", {
-    from_wallet_id: fromWalletId,
-    to_wallet_id: toWalletId,
-    amount,
-    note: note || undefined,
-  });
+  const extraHeaders = idempotencyKey
+    ? { "Idempotency-Key": idempotencyKey }
+    : undefined;
+  return api.post(
+    "/transfers",
+    { from_wallet_id: fromWalletId, to_wallet_id: toWalletId, amount, note: note || undefined },
+    extraHeaders
+  );
 }
 
 export function getWalletTransactions(
