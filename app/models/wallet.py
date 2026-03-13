@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Numeric, ForeignKey, Enum as SAEnum, DateTime
+from sqlalchemy import String, Numeric, ForeignKey, Enum as SAEnum, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from decimal import Decimal
 
@@ -11,6 +11,9 @@ from app.models.currency import Currency
 
 class Wallet(Base):
     __tablename__ = "wallets"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "currency", name="uq_wallet_owner_currency"),
+    )
 
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())

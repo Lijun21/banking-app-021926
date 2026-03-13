@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -51,7 +52,14 @@ def create_wallet(
         balance=payload.initial_balance,
     )
     db.add(wallet)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"User already has a {payload.currency} wallet.",
+        )
     db.refresh(wallet)
     return wallet
 

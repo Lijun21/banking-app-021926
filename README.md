@@ -72,3 +72,57 @@ docker compose up db_test -d
 ```bash
 TEST_DATABASE_URL=postgresql://user:pass@host:5432/mydb pytest tests/ -v
 ```
+
+---
+
+## database migrations (Alembic)
+
+Schema changes are managed with [Alembic](https://alembic.sqlalchemy.org/en/latest/tutorial.html). Migration files live in `alembic/versions/`.
+
+### common commands
+
+**Apply all pending migrations** (run this after pulling new changes)
+```bash
+alembic upgrade head
+```
+
+**Undo the last migration**
+```bash
+alembic downgrade -1
+```
+
+**Undo all migrations** (back to empty schema)
+```bash
+alembic downgrade base
+```
+
+**Check current migration state**
+```bash
+alembic current
+```
+
+**View migration history**
+```bash
+alembic history --verbose
+```
+
+### adding a new migration
+
+After changing a model in `app/models/`, generate a migration automatically:
+```bash
+alembic revision --autogenerate -m "describe_your_change"
+```
+
+Review the generated file in `alembic/versions/` before applying — add any data cleanup SQL if needed (e.g. deduplication before adding a unique constraint). Then apply:
+```bash
+alembic upgrade head
+```
+
+### notes
+
+- If you have a **local PostgreSQL** running on port `5432`, it will conflict with the Docker DB. Stop it first:
+  ```bash
+  brew services stop postgresql@15   # adjust version as needed
+  ```
+- Alembic tracks applied migrations in the `alembic_version` table inside the DB — running `upgrade head` multiple times is safe, it only applies what's new.
+- Migration files must be committed to git so teammates and production deployments can apply the same changes.
