@@ -21,7 +21,6 @@ def _require_self(user_id: str, current_user: User) -> None:
             detail="Forbidden: you can only manage your own wallets.",
         )
 
-
 @router.post("/", response_model=WalletResponse, status_code=status.HTTP_201_CREATED)
 def create_wallet(
     user_id: str,

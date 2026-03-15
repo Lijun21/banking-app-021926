@@ -8,6 +8,7 @@ Code up a banking app that
 
 The rest is up to you. You can go as deep as you want
 
+
 ## quickstart
 
 ### prerequisites

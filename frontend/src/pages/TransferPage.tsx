@@ -2,8 +2,7 @@ import { useEffect, useState, useCallback, type FormEvent } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { listWallets, searchUserWallets, type WalletResponse, type Currency } from "../api/wallets";
-import { transfer, type TransactionResponse } from "../api/transactions";
-import { getQuote, type Quote } from "../utils/rates";
+import { createTransfer, confirmTransfer, type TransactionResponse } from "../api/transactions";
 import { formatAmount, maskId } from "../utils/format";
 import { ApiError } from "../api/client";
 
@@ -32,11 +31,9 @@ export default function TransferPage() {
   // Resolved destination wallet (after lookup)
   const [toWallet, setToWallet] = useState<WalletResponse | null>(null);
 
-  // Quote state
-  const [quote, setQuote] = useState<Quote | null>(null);
+  // Quote state — the transfer row returned from POST /transfers (status: quote_locked)
+  const [quote, setQuote] = useState<TransactionResponse | null>(null);
   const [countdown, setCountdown] = useState(60);
-  // Idempotency key — generated once per quote, reused on retries
-  const [idempotencyKey, setIdempotencyKey] = useState("");
 
   // Result state
   const [result, setResult] = useState<TransactionResponse | null>(null);
@@ -49,13 +46,22 @@ export default function TransferPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Countdown timer on quote screen
+  // Countdown timer driven by server expires_at
   useEffect(() => {
-    if (step !== "quote") return;
-    setCountdown(60);
-    const id = setInterval(() => {
-      setCountdown((c) => (c <= 1 ? 60 : c - 1));
-    }, 1000);
+    if (step !== "quote" || !quote) return;
+    const tick = () => {
+      const secsLeft = Math.floor(
+        (new Date(quote.expires_at).getTime() - Date.now()) / 1000
+      );
+      if (secsLeft <= 0) {
+        setStep("form");
+        setFormError("Quote expired. Please get a new quote.");
+        return;
+      }
+      setCountdown(secsLeft);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [step, quote]);
 
@@ -93,9 +99,8 @@ export default function TransferPage() {
         return;
       }
       setToWallet(matched);
-      const q = getQuote(numAmount, fromWallet.currency, toCurrency);
-      setQuote(q);
-      setIdempotencyKey(crypto.randomUUID()); // fresh key per quote
+      const txn = await createTransfer(fromWallet.id, matched.id, amount, note || undefined);
+      setQuote(txn);
       setStep("quote");
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
@@ -109,11 +114,11 @@ export default function TransferPage() {
   }
 
   const handleConfirm = useCallback(async () => {
-    if (!fromWallet || !toWallet) return;
+    if (!fromWallet || !toWallet || !quote) return;
     setConfirmLoading(true);
     setTransferError("");
     try {
-      const txn = await transfer(fromWalletId, toWallet.id, amount, note || undefined, idempotencyKey);
+      const txn = await confirmTransfer(quote.id);
       setResult(txn);
       setStep("result");
       // Refresh wallet balances so "Send Another" shows updated amounts
@@ -127,7 +132,7 @@ export default function TransferPage() {
     } finally {
       setConfirmLoading(false);
     }
-  }, [fromWalletId, toWallet, amount, note, fromWallet, user, idempotencyKey]);
+  }, [quote, fromWallet, toWallet, user]);
 
   if (!user) return null;
 
@@ -255,15 +260,15 @@ export default function TransferPage() {
           <hr className="border-gray-100" />
 
           <div className="space-y-3">
-            <Row label="You send" value={formatAmount(quote.sendAmount, fromWallet.currency)} />
+            <Row label="You send" value={formatAmount(quote.amount, fromWallet.currency)} />
             <Row
               label="Recipient gets (est.)"
-              value={formatAmount(quote.receiveAmount, toWallet.currency)}
+              value={formatAmount(quote.receive_amount ?? "0", toWallet.currency)}
             />
             {fromWallet.currency !== toWallet.currency && (
               <Row
                 label="Exchange rate"
-                value={`1 ${fromWallet.currency} = ${quote.rate.toFixed(6)} ${toWallet.currency}`}
+                value={`1 ${fromWallet.currency} = ${parseFloat(quote.rate ?? "1").toFixed(6)} ${toWallet.currency}`}
               />
             )}
             <Row label="To" value={`@${toUsername} (${toCurrency})`} />

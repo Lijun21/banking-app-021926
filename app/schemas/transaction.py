@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 from app.models.currency import Currency
 
 
-class TransferRequest(BaseModel):
+class QuoteRequest(BaseModel):
     from_wallet_id: str
     to_wallet_id: str
     amount: Decimal
@@ -25,8 +25,12 @@ class TransactionResponse(BaseModel):
     to_wallet_id: str
     amount: Decimal
     currency: Currency
+    rate: Decimal | None
+    receive_amount: Decimal | None
     status: str
     note: str | None
     created_at: datetime
+    expires_at: datetime
+    completed_at: datetime | None
 
     model_config = {"from_attributes": True}

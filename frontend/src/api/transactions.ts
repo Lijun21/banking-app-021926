@@ -7,26 +7,31 @@ export interface TransactionResponse {
   to_wallet_id: string;
   amount: string;
   currency: Currency;
+  rate: string | null;
+  receive_amount: string | null;
   status: string;
   note: string | null;
   created_at: string;
+  expires_at: string;
+  completed_at: string | null;
 }
 
-export function transfer(
+export function createTransfer(
   fromWalletId: string,
   toWalletId: string,
   amount: string,
   note?: string,
-  idempotencyKey?: string
 ): Promise<TransactionResponse> {
-  const extraHeaders = idempotencyKey
-    ? { "Idempotency-Key": idempotencyKey }
-    : undefined;
-  return api.post(
-    "/transfers",
-    { from_wallet_id: fromWalletId, to_wallet_id: toWalletId, amount, note: note || undefined },
-    extraHeaders
-  );
+  return api.post("/transfers", {
+    from_wallet_id: fromWalletId,
+    to_wallet_id: toWalletId,
+    amount,
+    note: note || undefined,
+  });
+}
+
+export function confirmTransfer(transferId: string): Promise<TransactionResponse> {
+  return api.post(`/transfers/${transferId}/confirm`, {});
 }
 
 export function getWalletTransactions(
@@ -35,3 +40,4 @@ export function getWalletTransactions(
 ): Promise<TransactionResponse[]> {
   return api.get(`/wallets/${walletId}/transactions?limit=${limit}`);
 }
+

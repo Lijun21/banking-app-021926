@@ -39,3 +39,4 @@ alembic/versions/*.pyc
 
 # Docker
 *.log
+

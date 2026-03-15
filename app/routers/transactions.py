@@ -1,41 +1,26 @@
-import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models.idempotency import IdempotencyRecord
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.transaction import TransferRequest, TransactionResponse
-from app.services.transfer_service import transfer
+from app.schemas.transaction import QuoteRequest, TransactionResponse
+from app.services.transfer_service import lock_quote, confirm_transfer
 
 router = APIRouter(tags=["Transactions"])
 
 
 @router.post("/transfers", response_model=TransactionResponse, status_code=201)
-def make_transfer(
-    payload: TransferRequest,
+def create_transfer(
+    payload: QuoteRequest,
     db: Session = Depends(get_db),
     current_user: Annotated[User, Depends(get_current_user)] = None,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    # If client sent an idempotency key, check for a cached result first
-    if idempotency_key:
-        existing = db.query(IdempotencyRecord).filter(
-            IdempotencyRecord.idempotency_key == idempotency_key,
-            IdempotencyRecord.user_id == current_user.id,
-        ).first()
-        if existing:
-            return Response(
-                content=existing.response_json,
-                status_code=existing.status_code,
-                media_type="application/json",
-            )
-
-    txn = transfer(
+    """Stage 1: validate, lock rate, persist transfer with status=quote_locked."""
+    return lock_quote(
         db=db,
         from_wallet_id=payload.from_wallet_id,
         to_wallet_id=payload.to_wallet_id,
@@ -44,19 +29,15 @@ def make_transfer(
         note=payload.note,
     )
 
-    # Cache the result so retries with the same key get the same response
-    if idempotency_key:
-        response_data = TransactionResponse.model_validate(txn).model_dump(mode="json")
-        record = IdempotencyRecord(
-            idempotency_key=idempotency_key,
-            user_id=current_user.id,
-            status_code=201,
-            response_json=json.dumps(response_data),
-        )
-        db.add(record)
-        db.commit()
 
-    return txn
+@router.post("/transfers/{transfer_id}/confirm", response_model=TransactionResponse)
+def confirm_transfer_endpoint(
+    transfer_id: str,
+    db: Session = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+):
+    """Stage 2: verify quote not expired, execute balance transfer, status=completed."""
+    return confirm_transfer(db=db, transfer_id=transfer_id, requester_id=current_user.id)
 
 
 @router.get("/wallets/{wallet_id}/transactions", response_model=list[TransactionResponse])
@@ -66,7 +47,7 @@ def get_wallet_transactions(
     db: Session = Depends(get_db),
     current_user: Annotated[User, Depends(get_current_user)] = None,
 ):
-    """Return all transactions where the wallet was sender or receiver."""
+    """Return completed transactions where the wallet was sender or receiver."""
     txns = (
         db.query(Transaction)
         .filter(
@@ -78,3 +59,4 @@ def get_wallet_transactions(
         .all()
     )
     return txns
+

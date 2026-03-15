@@ -171,25 +171,38 @@ class TestWalletEndpoints:
 # ---------------------------------------------------------------------------
 
 class TestTransferEndpoints:
+    def _lock_and_confirm(self, client, from_wallet_id, to_wallet_id, amount, headers):
+        """Execute the 2-step transfer flow: POST /transfers then POST /transfers/{id}/confirm."""
+        quote_resp = client.post("/transfers", json={
+            "from_wallet_id": from_wallet_id,
+            "to_wallet_id": to_wallet_id,
+            "amount": amount,
+        }, headers=headers)
+        if quote_resp.status_code != 201:
+            return quote_resp
+        quote_id = quote_resp.json()["id"]
+        return client.post(f"/transfers/{quote_id}/confirm", headers=headers)
+
     def test_successful_transfer(self, client, two_users_with_wallets):
         _, _, alice_wallet, bob_wallet, alice_headers, _ = two_users_with_wallets
-        response = client.post("/transfers", json={
+        # Step 1: lock the quote
+        quote_resp = client.post("/transfers", json={
             "from_wallet_id": alice_wallet["id"],
             "to_wallet_id": bob_wallet["id"],
             "amount": "200",
         }, headers=alice_headers)
-        assert response.status_code == 201
+        assert quote_resp.status_code == 201
+        assert quote_resp.json()["status"] == "quote_locked"
+        # Step 2: confirm
+        response = client.post(f"/transfers/{quote_resp.json()['id']}/confirm", headers=alice_headers)
+        assert response.status_code == 200
         data = response.json()
         assert data["status"] == "completed"
         assert Decimal(data["amount"]) == Decimal("200")
 
     def test_transfer_updates_balances(self, client, two_users_with_wallets):
         alice, bob, alice_wallet, bob_wallet, alice_headers, bob_headers = two_users_with_wallets
-        client.post("/transfers", json={
-            "from_wallet_id": alice_wallet["id"],
-            "to_wallet_id": bob_wallet["id"],
-            "amount": "150",
-        }, headers=alice_headers)
+        self._lock_and_confirm(client, alice_wallet["id"], bob_wallet["id"], "150", alice_headers)
         updated_alice = client.get(f"/users/{alice['id']}/wallets/{alice_wallet['id']}", headers=alice_headers).json()
         updated_bob = client.get(f"/users/{bob['id']}/wallets/{bob_wallet['id']}", headers=bob_headers).json()
         assert Decimal(updated_alice["balance"]) == Decimal("350")
@@ -235,11 +248,7 @@ class TestTransferEndpoints:
 
     def test_get_wallet_transactions(self, client, two_users_with_wallets):
         alice, _, alice_wallet, bob_wallet, alice_headers, _ = two_users_with_wallets
-        client.post("/transfers", json={
-            "from_wallet_id": alice_wallet["id"],
-            "to_wallet_id": bob_wallet["id"],
-            "amount": "50",
-        }, headers=alice_headers)
+        self._lock_and_confirm(client, alice_wallet["id"], bob_wallet["id"], "50", alice_headers)
         response = client.get(f"/wallets/{alice_wallet['id']}/transactions", headers=alice_headers)
         assert response.status_code == 200
         txns = response.json()
