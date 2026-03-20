@@ -34,3 +34,11 @@ class TransactionResponse(BaseModel):
     completed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class PaginatedTransactionResponse(BaseModel):
+    items: list[TransactionResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int

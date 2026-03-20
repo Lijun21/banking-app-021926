@@ -34,10 +34,19 @@ export function confirmTransfer(transferId: string): Promise<TransactionResponse
   return api.post(`/transfers/${transferId}/confirm`, {});
 }
 
+export interface PaginatedTransactions {
+  items: TransactionResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
 export function getWalletTransactions(
   walletId: string,
-  limit = 50
-): Promise<TransactionResponse[]> {
-  return api.get(`/wallets/${walletId}/transactions?limit=${limit}`);
+  page = 1,
+  pageSize = 20,
+): Promise<PaginatedTransactions> {
+  return api.get(`/wallets/${walletId}/transactions?page=${page}&page_size=${pageSize}`);
 }
 
