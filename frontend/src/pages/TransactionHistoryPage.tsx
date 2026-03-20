@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getWalletTransactions, type TransactionResponse } from "../api/transactions";
@@ -15,34 +15,38 @@ export default function TransactionHistoryPage() {
 
   const [transactions, setTransactions] = useState<TransactionResponse[]>([]);
   const [wallet, setWallet] = useState<WalletResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-
-  // Cursor stack: each entry is the cursor used to fetch that page.
-  // undefined = first page (no cursor). Stack grows as user pages forward.
-  const [cursorStack, setCursorStack] = useState<(string | undefined)[]>([undefined]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
 
-  const currentCursor = cursorStack[cursorStack.length - 1];
-  const pageNumber = cursorStack.length; // 1-based display
+  // Sentinel div at the bottom — observed to trigger next page load
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // Guard against duplicate fetches when observer fires multiple times
+  const isFetchingRef = useRef(false);
 
+  // Load initial page + wallet info
   useEffect(() => {
     if (!user) { navigate("/login"); return; }
     if (!walletId) { navigate("/dashboard"); return; }
 
-    async function load() {
-      setLoading(true);
+    async function loadInitial() {
+      setLoadingInitial(true);
       setError("");
+      setTransactions([]);
+      setNextCursor(null);
+      setHasMore(false);
       try {
         const [result, wallets] = await Promise.all([
-          getWalletTransactions(walletId!, currentCursor, PAGE_SIZE),
+          getWalletTransactions(walletId!, undefined, PAGE_SIZE),
           listWallets(user!.id),
         ]);
         setTransactions(result.items);
         setNextCursor(result.next_cursor);
-        const found = wallets.find((w) => w.id === walletId);
-        setWallet(found ?? null);
+        setHasMore(result.has_more);
+        setWallet(wallets.find((w) => w.id === walletId) ?? null);
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           navigate("/login", { state: { message: "Session expired — log in again." } });
@@ -50,23 +54,43 @@ export default function TransactionHistoryPage() {
           setError("Failed to load transactions.");
         }
       } finally {
-        setLoading(false);
+        setLoadingInitial(false);
       }
     }
 
-    load();
+    loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletId, currentCursor, user]);
+  }, [walletId, user]);
 
-  function goNext() {
-    if (!nextCursor) return;
-    setCursorStack((s) => [...s, nextCursor]);
-  }
+  // Append the next page when called
+  const loadMore = useCallback(async () => {
+    if (isFetchingRef.current || !hasMore || !nextCursor || !walletId) return;
+    isFetchingRef.current = true;
+    setLoadingMore(true);
+    try {
+      const result = await getWalletTransactions(walletId, nextCursor, PAGE_SIZE);
+      setTransactions((prev) => [...prev, ...result.items]);
+      setNextCursor(result.next_cursor);
+      setHasMore(result.has_more);
+    } catch {
+      // silently ignore; user can scroll again to retry
+    } finally {
+      setLoadingMore(false);
+      isFetchingRef.current = false;
+    }
+  }, [hasMore, nextCursor, walletId]);
 
-  function goPrev() {
-    if (cursorStack.length <= 1) return;
-    setCursorStack((s) => s.slice(0, -1));
-  }
+  // IntersectionObserver watches the sentinel div
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) loadMore(); },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   const filtered = transactions.filter((t) => {
     if (!search) return true;
@@ -110,10 +134,10 @@ export default function TransactionHistoryPage() {
         />
       </div>
 
-      {loading && <p className="text-sm text-gray-400">Loading…</p>}
+      {loadingInitial && <p className="text-sm text-gray-400">Loading…</p>}
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      {!loading && filtered.length === 0 && !error && (
+      {!loadingInitial && filtered.length === 0 && !error && (
         <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400 text-sm">
           No transactions found.
         </div>
@@ -169,27 +193,14 @@ export default function TransactionHistoryPage() {
         </div>
       )}
 
-      {/* Cursor pagination controls */}
-      {!loading && (cursorStack.length > 1 || nextCursor) && (
-        <div className="flex items-center justify-between mt-6">
-          <span className="text-xs text-gray-400">Page {pageNumber}</span>
-          <div className="flex gap-2">
-            <button
-              onClick={goPrev}
-              disabled={cursorStack.length <= 1}
-              className="px-4 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
-            >
-              ← Prev
-            </button>
-            <button
-              onClick={goNext}
-              disabled={!nextCursor}
-              className="px-4 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
-            >
-              Next →
-            </button>
-          </div>
-        </div>
+      {/* Sentinel — entering viewport triggers loadMore via IntersectionObserver */}
+      <div ref={sentinelRef} className="h-1" />
+
+      {loadingMore && (
+        <p className="text-center text-sm text-gray-400 mt-4">Loading more…</p>
+      )}
+      {!loadingInitial && !hasMore && transactions.length > 0 && (
+        <p className="text-center text-xs text-gray-300 mt-4">All transactions loaded</p>
       )}
     </div>
   );
