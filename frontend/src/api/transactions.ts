@@ -34,10 +34,19 @@ export function confirmTransfer(transferId: string): Promise<TransactionResponse
   return api.post(`/transfers/${transferId}/confirm`, {});
 }
 
+export interface CursorPage {
+  items: TransactionResponse[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
 export function getWalletTransactions(
   walletId: string,
-  limit = 50
-): Promise<TransactionResponse[]> {
-  return api.get(`/wallets/${walletId}/transactions?limit=${limit}`);
+  cursor?: string,
+  pageSize = 20,
+): Promise<CursorPage> {
+  const params = new URLSearchParams({ page_size: String(pageSize) });
+  if (cursor) params.set("cursor", cursor);
+  return api.get(`/wallets/${walletId}/transactions?${params}`);
 }
 

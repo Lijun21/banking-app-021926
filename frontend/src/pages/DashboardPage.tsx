@@ -31,12 +31,12 @@ export default function DashboardPage() {
       const ws = await listWallets(user.id);
       setWallets(ws);
 
-      // Fetch recent transactions across all wallets (latest 3 per wallet)
+      // Fetch recent transactions across all wallets (first page, 5 per wallet)
       const txnArrays = await Promise.all(
-        ws.map((w) => getWalletTransactions(w.id, 5))
+        ws.map((w) => getWalletTransactions(w.id, undefined, 5))
       );
       const all = txnArrays
-        .flat()
+        .flatMap((r) => r.items)
         .sort(
           (a, b) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()

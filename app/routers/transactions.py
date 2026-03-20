@@ -1,3 +1,5 @@
+import base64
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -7,7 +9,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.transaction import QuoteRequest, TransactionResponse
+from app.schemas.transaction import CursorPage, QuoteRequest, TransactionResponse
 from app.services.transfer_service import lock_quote, confirm_transfer
 
 router = APIRouter(tags=["Transactions"])
@@ -40,23 +42,43 @@ def confirm_transfer_endpoint(
     return confirm_transfer(db=db, transfer_id=transfer_id, requester_id=current_user.id)
 
 
-@router.get("/wallets/{wallet_id}/transactions", response_model=list[TransactionResponse])
+@router.get("/wallets/{wallet_id}/transactions", response_model=CursorPage)
 def get_wallet_transactions(
     wallet_id: str,
-    limit: int = Query(default=50, le=200),
+    cursor: str | None = Query(default=None),
+    page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: Annotated[User, Depends(get_current_user)] = None,
 ):
-    """Return completed transactions where the wallet was sender or receiver."""
-    txns = (
-        db.query(Transaction)
-        .filter(
-            (Transaction.from_wallet_id == wallet_id)
-            | (Transaction.to_wallet_id == wallet_id)
-        )
-        .order_by(Transaction.created_at.desc())
-        .limit(limit)
-        .all()
+    """Return cursor-paginated transactions where the wallet was sender or receiver.
+
+    Cursor encodes the created_at of the last returned item (base64 ISO string).
+    Pass it back as ?cursor=... to fetch the next page.
+    """
+    q = db.query(Transaction).filter(
+        (Transaction.from_wallet_id == wallet_id)
+        | (Transaction.to_wallet_id == wallet_id)
     )
-    return txns
+
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(
+                base64.b64decode(cursor.encode()).decode()
+            ).replace(tzinfo=timezone.utc)
+        except Exception:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        q = q.filter(Transaction.created_at < cursor_dt)
+
+    # Fetch one extra to detect whether more pages exist
+    rows = q.order_by(Transaction.created_at.desc()).limit(page_size + 1).all()
+    has_more = len(rows) > page_size
+    items = rows[:page_size]
+
+    next_cursor: str | None = None
+    if has_more and items:
+        last_ts = items[-1].created_at
+        next_cursor = base64.b64encode(last_ts.isoformat().encode()).decode()
+
+    return CursorPage(items=items, next_cursor=next_cursor, has_more=has_more)
 

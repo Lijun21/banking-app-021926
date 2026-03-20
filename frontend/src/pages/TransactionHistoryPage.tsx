@@ -6,6 +6,8 @@ import { listWallets, type WalletResponse } from "../api/wallets";
 import { ApiError } from "../api/client";
 import { formatAmount, formatDate, maskId } from "../utils/format";
 
+const PAGE_SIZE = 20;
+
 export default function TransactionHistoryPage() {
   const { walletId } = useParams<{ walletId: string }>();
   const { user } = useAuth();
@@ -15,8 +17,15 @@ export default function TransactionHistoryPage() {
   const [wallet, setWallet] = useState<WalletResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [limit, setLimit] = useState(50);
   const [search, setSearch] = useState("");
+
+  // Cursor stack: each entry is the cursor used to fetch that page.
+  // undefined = first page (no cursor). Stack grows as user pages forward.
+  const [cursorStack, setCursorStack] = useState<(string | undefined)[]>([undefined]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+
+  const currentCursor = cursorStack[cursorStack.length - 1];
+  const pageNumber = cursorStack.length; // 1-based display
 
   useEffect(() => {
     if (!user) { navigate("/login"); return; }
@@ -26,11 +35,12 @@ export default function TransactionHistoryPage() {
       setLoading(true);
       setError("");
       try {
-        const [txns, wallets] = await Promise.all([
-          getWalletTransactions(walletId!, limit),
+        const [result, wallets] = await Promise.all([
+          getWalletTransactions(walletId!, currentCursor, PAGE_SIZE),
           listWallets(user!.id),
         ]);
-        setTransactions(txns);
+        setTransactions(result.items);
+        setNextCursor(result.next_cursor);
         const found = wallets.find((w) => w.id === walletId);
         setWallet(found ?? null);
       } catch (err) {
@@ -46,7 +56,17 @@ export default function TransactionHistoryPage() {
 
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletId, limit, user]);
+  }, [walletId, currentCursor, user]);
+
+  function goNext() {
+    if (!nextCursor) return;
+    setCursorStack((s) => [...s, nextCursor]);
+  }
+
+  function goPrev() {
+    if (cursorStack.length <= 1) return;
+    setCursorStack((s) => s.slice(0, -1));
+  }
 
   const filtered = transactions.filter((t) => {
     if (!search) return true;
@@ -79,7 +99,7 @@ export default function TransactionHistoryPage() {
         </button>
       </div>
 
-      {/* Filters */}
+      {/* Search */}
       <div className="flex gap-3 mb-4">
         <input
           type="text"
@@ -90,12 +110,8 @@ export default function TransactionHistoryPage() {
         />
       </div>
 
-      {loading && (
-        <p className="text-sm text-gray-400">Loading…</p>
-      )}
-      {error && (
-        <p className="text-sm text-red-500">{error}</p>
-      )}
+      {loading && <p className="text-sm text-gray-400">Loading…</p>}
+      {error && <p className="text-sm text-red-500">{error}</p>}
 
       {!loading && filtered.length === 0 && !error && (
         <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400 text-sm">
@@ -138,13 +154,9 @@ export default function TransactionHistoryPage() {
                     {formatAmount(txn.amount, txn.currency)}
                   </span>{" "}
                   {isSent ? (
-                    <>
-                      → <span className="font-mono text-gray-500">{maskId(txn.to_wallet_id)}</span>
-                    </>
+                    <>→ <span className="font-mono text-gray-500">{maskId(txn.to_wallet_id)}</span></>
                   ) : (
-                    <>
-                      ← <span className="font-mono text-gray-500">{maskId(txn.from_wallet_id)}</span>
-                    </>
+                    <>← <span className="font-mono text-gray-500">{maskId(txn.from_wallet_id)}</span></>
                   )}
                 </div>
 
@@ -157,14 +169,26 @@ export default function TransactionHistoryPage() {
         </div>
       )}
 
-      {!loading && transactions.length === limit && (
-        <div className="text-center mt-6">
-          <button
-            onClick={() => setLimit((l) => l + 50)}
-            className="border border-gray-300 text-gray-700 rounded-lg px-6 py-2 text-sm hover:bg-gray-50 transition-colors"
-          >
-            Load more
-          </button>
+      {/* Cursor pagination controls */}
+      {!loading && (cursorStack.length > 1 || nextCursor) && (
+        <div className="flex items-center justify-between mt-6">
+          <span className="text-xs text-gray-400">Page {pageNumber}</span>
+          <div className="flex gap-2">
+            <button
+              onClick={goPrev}
+              disabled={cursorStack.length <= 1}
+              className="px-4 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+            >
+              ← Prev
+            </button>
+            <button
+              onClick={goNext}
+              disabled={!nextCursor}
+              className="px-4 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+            >
+              Next →
+            </button>
+          </div>
         </div>
       )}
     </div>

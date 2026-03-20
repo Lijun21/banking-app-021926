@@ -34,3 +34,9 @@ class TransactionResponse(BaseModel):
     completed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class CursorPage(BaseModel):
+    items: list[TransactionResponse]
+    next_cursor: str | None  # base64(ISO timestamp) of last item; None = no more pages
+    has_more: bool
